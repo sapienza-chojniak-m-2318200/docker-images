@@ -18,9 +18,9 @@ git push origin name/v0.0.0
 # ========================
 
 `
-docker pull ghcr.io/YOUR_GITHUB_USERNAME/api:1.0.0
+docker pull ghcr.io/sapienza-chojniak-m-2318200/name:0.0.0
 `
 ##### or
 `
-docker run -d --name my-api-service ghcr.io/YOUR_GITHUB_USERNAME/api:1.0.0
+docker run -d --name my-api-service ghcr.io/sapienza-chojniak-m-2318200/name:0.0.0
 `
