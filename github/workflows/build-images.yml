@@ -1,0 +1,110 @@
+name: Build, Test & Push Docker Images
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - '*/*' # Triggered by tags formatted as: <image_name>/v<semver> (e.g., api/v1.0.0)
+    paths:
+      - 'docker/*.Dockerfile'
+      - '.github/workflows/build-images.yml'
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'docker/*.Dockerfile'
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # STEP 1: Dynamically detect available *.Dockerfile files or target specific tagged image
+  detect-dockerfiles:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Parse target images into matrix
+        id: set-matrix
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            # Extract image name from Git tag (e.g., "api/v1.0.0" -> "api")
+            TAG_NAME="${{ github.ref_name }}"
+            IMAGE_NAME="${TAG_NAME%%/*}"
+            IMAGES=$(jq -n -c --arg img "$IMAGE_NAME" '[$img]')
+          else
+            # Scan directory for all *.Dockerfile files
+            IMAGES=$(ls docker/*.Dockerfile | xargs -n 1 basename | sed 's/\.Dockerfile$//' | jq -R . | jq -s -c .)
+          fi
+          echo "matrix={\"image\":${IMAGES}}" >> $GITHUB_OUTPUT
+
+  # STEP 2: Build, test, and push images in parallel using matrix strategy
+  build-test-push:
+    needs: detect-dockerfiles
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect-dockerfiles.outputs.matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Generate Docker metadata and tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}
+          tags: |
+            # Extract semver tag when pushed via Git tag (e.g., api/v1.2.3 -> 1.2.3, 1.2, 1)
+            type=semver,pattern={{version}},match-value=${{ matrix.image }}/*
+            type=semver,pattern={{major}}.{{minor}},match-value=${{ matrix.image }}/*
+            # Standard tags for branch pushes
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+            type=sha,format=short
+
+      # --- IMAGE TESTING ---
+      - name: Build image locally for testing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.image }}.Dockerfile
+          load: true
+          tags: ${{ matrix.image }}:test
+
+      - name: Test container execution
+        run: |
+          echo "Testing container: ${{ matrix.image }}"
+          docker run --rm ${{ matrix.image }}:test echo "Smoke test passed successfully!"
+
+      # --- PUBLISH TO GITHUB PACKAGES ---
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.image }}.Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
