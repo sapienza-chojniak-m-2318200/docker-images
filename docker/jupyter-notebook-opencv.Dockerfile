@@ -11,7 +11,7 @@ RUN pip install jupyter \
         scikit-learn \
         scipy
 
-RUN pip install opencv-python
+RUN pip install opencv-python-headless
 
 
 
