@@ -20,4 +20,4 @@ USER jupyter
 
 WORKDIR /home/jupyter
 
-CMD ["jupyter", "notebook", "--ip=*", "--IPKernelApp.transport=ipc"]
+CMD ["jupyter", "notebook", "--ip=*"]
